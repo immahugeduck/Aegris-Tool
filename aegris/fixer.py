@@ -76,11 +76,11 @@ def run_fixer(root: Path, findings: list[Finding], model: str | None = None,
               max_budget_usd: float = 5.0, timeout_s: int = 3600) -> FixResult:
     if not findings:
         return FixResult(ran=False, summary="Nothing to fix.")
+    if not credentials_present():
+        return FixResult(ran=False, error="No ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN set.")
     exe = shutil.which("claude")
     if not exe:
         return FixResult(ran=False, error="Claude Code CLI not installed (npm i -g @anthropic-ai/claude-code).")
-    if not credentials_present():
-        return FixResult(ran=False, error="No ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN set.")
 
     cmd = [
         exe, "-p",
