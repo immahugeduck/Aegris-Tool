@@ -1,0 +1,92 @@
+name: Aegris security review
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Repo to review now, as owner/name. Leave blank to run every project that's due."
+        required: false
+        default: ""
+      ai_fix:
+        description: "Let Claude fix what the scanners find"
+        type: boolean
+        default: true
+  schedule:
+    # Checks daily, but each project is only reviewed when its own 30-day
+    # timer in registry/projects.json is up. 13:23 UTC is mid-morning in Indiana.
+    - cron: "23 13 * * *"
+
+permissions:
+  contents: write  # only used to commit registry/projects.json back to this repo
+
+concurrency:
+  group: aegris
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Pick projects
+        id: pick
+        env:
+          INPUT_REPO: ${{ inputs.repo }}
+        run: |
+          if [ -n "$INPUT_REPO" ]; then
+            python -m aegris add "$INPUT_REPO"
+            echo "$INPUT_REPO" > "$RUNNER_TEMP/targets.txt"
+          else
+            python -m aegris due > "$RUNNER_TEMP/targets.txt"
+          fi
+          echo "count=$(grep -c . "$RUNNER_TEMP/targets.txt" || true)" >> "$GITHUB_OUTPUT"
+          echo "Projects to review:"; cat "$RUNNER_TEMP/targets.txt"
+
+      - name: Install scanners and Claude Code
+        if: steps.pick.outputs.count != '0'
+        run: |
+          bash scripts/install-scanners.sh
+          npm install -g @anthropic-ai/claude-code
+
+      - name: Review
+        if: steps.pick.outputs.count != '0'
+        env:
+          AEGRIS_TOKEN: ${{ secrets.AEGRIS_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          AEGRIS_MODEL: ${{ vars.AEGRIS_MODEL }}
+          AEGRIS_MAX_BUDGET_USD: ${{ vars.AEGRIS_MAX_BUDGET_USD || '5' }}
+          NO_AI: ${{ (github.event_name == 'workflow_dispatch' && inputs.ai_fix == false) && '--no-ai' || '' }}
+        run: |
+          mapfile -t targets < "$RUNNER_TEMP/targets.txt"
+          python -m aegris run "${targets[@]}" $NO_AI --registry registry/projects.json --out reports
+
+      - name: Upload reports
+        if: always() && steps.pick.outputs.count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegris-reports
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Save registry
+        if: always() && steps.pick.outputs.count != '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add registry/projects.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "registry: review results $(date -u +%F)"
+          git pull --rebase --quiet origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

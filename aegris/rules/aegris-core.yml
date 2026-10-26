@@ -1,0 +1,128 @@
+# Small built-in ruleset. Runs alongside semgrep's public "p/default" pack and
+# keeps the code scan working if the semgrep.dev registry can't be reached.
+rules:
+  - id: aegris.js.eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: eval()/new Function() runs arbitrary code. If any part of the input can come from a user, this is remote code execution.
+    pattern-either:
+      - pattern: eval($X)
+      - pattern: new Function(...)
+    metadata: {cwe: "CWE-95", fix: "Parse the data (JSON.parse) or use a lookup table instead of evaluating code."}
+
+  - id: aegris.js.child-process-shell
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Shell command built from a variable. Anyone who controls that value can run their own commands.
+    pattern-either:
+      - pattern: require("child_process").exec(`...${$X}...`, ...)
+      - pattern: $CP.exec(`...${$X}...`, ...)
+      - pattern: $CP.execSync(`...${$X}...`, ...)
+      - pattern: exec(`...${$X}...`, ...)
+      - pattern: execSync(`...${$X}...`, ...)
+    metadata: {cwe: "CWE-78", fix: "Use execFile/spawn with an argument array instead of a shell string."}
+
+  - id: aegris.js.sql-template
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: SQL built by string interpolation. This is the classic SQL-injection pattern.
+    patterns:
+      - pattern-either:
+          - pattern: $DB.query(`...${$X}...`, ...)
+          - pattern: $DB.execute(`...${$X}...`, ...)
+          - pattern: $DB.raw(`...${$X}...`, ...)
+          - pattern: $DB.unsafe(`...${$X}...`, ...)
+      - pattern-not: $DB.query(`...`, [...])
+    metadata: {cwe: "CWE-89", fix: "Use parameterized queries (placeholders + a values array) or the driver's tagged-template API."}
+
+  - id: aegris.js.dangerously-set-inner-html
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: dangerouslySetInnerHTML with non-constant content can allow cross-site scripting.
+    patterns:
+      - pattern: "<$EL dangerouslySetInnerHTML={{__html: $X}} />"
+      - pattern-not: "<$EL dangerouslySetInnerHTML={{__html: \"...\"}} />"
+    metadata: {cwe: "CWE-79", fix: "Render as text, or sanitize with DOMPurify before injecting."}
+
+  - id: aegris.js.jwt-none-or-no-verify
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: JWT decoded without verifying the signature. Anyone can forge this token.
+    pattern: $JWT.decode($TOKEN, ...)
+    metadata: {cwe: "CWE-347", fix: "Use jwt.verify() with the secret/public key and an explicit algorithms list."}
+
+  - id: aegris.js.tls-reject-unauthorized
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: TLS certificate checking is turned off, which allows man-in-the-middle attacks.
+    pattern-either:
+      - pattern: "{..., rejectUnauthorized: false, ...}"
+      - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+    metadata: {cwe: "CWE-295", fix: "Remove it. If a private CA is needed, pass its certificate with the `ca` option."}
+
+  - id: aegris.py.subprocess-shell
+    languages: [python]
+    severity: ERROR
+    message: subprocess with shell=True and a non-constant command allows command injection.
+    patterns:
+      - pattern: subprocess.$F($CMD, ..., shell=True, ...)
+      - pattern-not: subprocess.$F("...", ..., shell=True, ...)
+    metadata: {cwe: "CWE-78", fix: "Pass the command as a list and drop shell=True."}
+
+  - id: aegris.py.os-system
+    languages: [python]
+    severity: ERROR
+    message: os.system with a non-constant command allows command injection.
+    patterns:
+      - pattern: os.system($CMD)
+      - pattern-not: os.system("...")
+    metadata: {cwe: "CWE-78", fix: "Use subprocess.run([...]) with an argument list."}
+
+  - id: aegris.py.sql-format
+    languages: [python]
+    severity: ERROR
+    message: SQL built with string formatting. This is the classic SQL-injection pattern.
+    pattern-either:
+      - pattern: $C.execute(f"...", ...)
+      - pattern: $C.execute("..." % $X, ...)
+      - pattern: $C.execute("...".format(...), ...)
+      - pattern: $C.execute("..." + $X, ...)
+    metadata: {cwe: "CWE-89", fix: "Use the driver's placeholders: cursor.execute('... WHERE id = %s', (value,))."}
+
+  - id: aegris.py.unsafe-deserialization
+    languages: [python]
+    severity: ERROR
+    message: Deserializing untrusted data with pickle/yaml.load can run arbitrary code.
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - patterns:
+          - pattern: yaml.load(...)
+          - pattern-not: yaml.load(..., Loader=yaml.SafeLoader, ...)
+          - pattern-not: yaml.load(..., Loader=SafeLoader, ...)
+    metadata: {cwe: "CWE-502", fix: "Use json, or yaml.safe_load()."}
+
+  - id: aegris.py.requests-verify-false
+    languages: [python]
+    severity: ERROR
+    message: TLS certificate verification disabled, which allows man-in-the-middle attacks.
+    pattern: requests.$M(..., verify=False, ...)
+    metadata: {cwe: "CWE-295", fix: "Remove verify=False, or point verify= at the CA bundle you need."}
+
+  - id: aegris.py.flask-debug
+    languages: [python]
+    severity: WARNING
+    message: Flask debug mode exposes an interactive console that allows code execution.
+    pattern: $APP.run(..., debug=True, ...)
+    metadata: {cwe: "CWE-489", fix: "Read debug from an environment variable that is off in production."}
+
+  - id: aegris.generic.weak-hash-for-secrets
+    languages: [python, javascript, typescript]
+    severity: WARNING
+    message: MD5/SHA1 are broken for security use (passwords, tokens, signatures).
+    pattern-either:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.sha1(...)
+      - pattern: crypto.createHash("md5")
+      - pattern: crypto.createHash("sha1")
+    metadata: {cwe: "CWE-327", fix: "Use SHA-256 for integrity checks; bcrypt/argon2/scrypt for passwords."}
