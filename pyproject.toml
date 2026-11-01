@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegris"
+version = "1.0.0"
+description = "Point it at a repository: it finds security problems, fixes them, and checks back every 30 days."
+requires-python = ">=3.10"
+dependencies = []  # standard library only; the scanners are separate binaries
+
+[project.scripts]
+aegris = "aegris.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["aegris*"]
+
+[tool.setuptools.package-data]
+aegris = ["rules/*.yml", "prompts/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
